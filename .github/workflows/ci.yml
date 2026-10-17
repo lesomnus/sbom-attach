@@ -1,0 +1,73 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: merge.jq
+        run: bash test/merge-test.sh
+      - name: shellcheck
+        run: shellcheck install.sh attach.sh test/merge-test.sh
+
+  # The action against a registry on the runner: an image pushed by digest, the
+  # lockfile beside it scanned, the two merged, the result attached. Not signed --
+  # a keyless signature needs a registry Sigstore's verifiers can reach, which a
+  # local one is not.
+  e2e:
+    runs-on: ubuntu-latest
+    services:
+      registry:
+        image: registry:2
+        ports: ["5000:5000"]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Push a test image
+        id: image
+        run: |
+          set -eu
+          docker build -t localhost:5000/e2e:test test/e2e
+          docker push localhost:5000/e2e:test
+          digest="$(docker inspect --format '{{index .RepoDigests 0}}' localhost:5000/e2e:test | cut -d@ -f2)"
+          echo "ref=localhost:5000/e2e@${digest}" >> "$GITHUB_OUTPUT"
+
+      - name: sbom-attach
+        id: sbom
+        uses: ./
+        with:
+          images: ${{ steps.image.outputs.ref }}
+          source: test/e2e
+          platform: linux/amd64
+          sign: "false"
+          plain-http: "true"
+
+      - name: The attached SBOM is the image's and the lockfile's
+        env:
+          REF: ${{ steps.image.outputs.ref }}
+        run: |
+          set -eu
+          referrer="$(oras discover --plain-http --format json --artifact-type application/vnd.cyclonedx+json "$REF" | jq -r '(.referrers // .manifests)[0].digest')"
+          test -n "$referrer" && test "$referrer" != null
+          mkdir got && oras pull --plain-http -o got "localhost:5000/e2e@${referrer}"
+          jq -r '.components[].purl // empty' got/sbom.cdx.json | sort > got/purls
+          cat got/purls
+          grep -q '^pkg:apk/alpine/busybox@' got/purls            # from the image
+          grep -q '^pkg:npm/left-pad@1.3.0' got/purls             # from the lockfile
+          ! grep -q '^pkg:npm/prettier@' got/purls                # a dev dependency is not shipped
+          test "$(jq -r .metadata.component.name got/sbom.cdx.json)" = localhost:5000/e2e
+
+      - name: A tag is refused
+        run: |
+          set -u
+          if IMAGES=localhost:5000/e2e:test OUT_DIR="$RUNNER_TEMP/tag" ATTACH=true SIGN=false PLATFORM=linux/amd64 ./attach.sh; then
+            echo "a tag was accepted" >&2; exit 1
+          fi

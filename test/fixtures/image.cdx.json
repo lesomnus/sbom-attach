@@ -1,0 +1,8 @@
+{"bomFormat":"CycloneDX","specVersion":"1.6","serialNumber":"urn:uuid:image",
+ "metadata":{"tools":{"components":[{"type":"application","name":"syft","version":"1.54.1"}]},"component":{"type":"container","name":"ghcr.io/example/app"}},
+ "components":[
+  {"bom-ref":"i1","type":"library","name":"x/a","version":"v1","purl":"pkg:golang/x/a@v1?type=module"},
+  {"bom-ref":"i2","type":"library","name":"x/b","version":"v2","purl":"pkg:golang/x/b@v2?type=module","licenses":[{"license":{"id":"BSD-3-Clause"}}]},
+  {"bom-ref":"i3","type":"library","name":"tzdata","purl":"pkg:deb/debian/tzdata@2026b?distro=debian-12","licenses":[{"license":{"name":"public-domain"}}]},
+  {"bom-ref":"i4","type":"operating-system","name":"debian"}],
+ "dependencies":[{"ref":"i1","dependsOn":[]}]}

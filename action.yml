@@ -1,0 +1,92 @@
+name: sbom-attach
+description: >-
+  Scan a pushed image, merge in what the build knows, and attach the result to the
+  image as a CycloneDX referrer -- signed, by default, as a Sigstore attestation.
+author: lesomnus
+branding:
+  icon: package
+  color: blue
+
+inputs:
+  images:
+    description: >-
+      Images to attach to, one `name@sha256:…` per line. A tag is refused: attach
+      to exactly what was pushed.
+    default: ""
+  metadata:
+    description: >-
+      The `metadata` output of docker/bake-action or docker/build-push-action.
+      Every entry with an `image.name` and a `containerimage.digest` is attached
+      to. Combines with `images`.
+    default: ""
+  source:
+    description: >-
+      A directory to scan for what the image cannot show -- typically `.`, the
+      checkout, for a lockfile whose packages a bundler folds into one file. Empty
+      scans nothing.
+    default: ""
+  source-catalogers:
+    description: >-
+      syft catalogers for `source`, by tag (`--select-catalogers`). Go is left
+      out on purpose: the binary in the image carries its module list, and go.mod
+      would add test and tool dependencies.
+    default: javascript,python
+  build-sbom:
+    description: >-
+      CycloneDX JSON files made by the build, one path per line, merged into each
+      image's scan -- e.g. a scan of a binary beside its module cache, for licenses.
+    default: ""
+  platform:
+    description: The platform of each image to scan.
+    default: linux/amd64
+  go-remote-licenses:
+    description: >-
+      Look up Go modules' licenses on the module proxy, for an image whose binary
+      carries the module list but not the license files.
+    default: "false"
+  attach:
+    description: Attach the SBOM as a plain referrer (`application/vnd.cyclonedx+json`).
+    default: "true"
+  sign:
+    description: >-
+      Also attach it as a signed attestation (`cosign attest --type cyclonedx`),
+      keyless through the job's OIDC token: the job needs `id-token: write`. The
+      signature is recorded in Sigstore's public transparency log.
+    default: "true"
+  plain-http:
+    description: Talk to the registry over plain HTTP (a local test registry).
+    default: "false"
+
+outputs:
+  dir:
+    description: Where the documents are, one directory per image.
+    value: ${{ steps.attach.outputs.dir }}
+  sboms:
+    description: "`ref=path` per line: each image and its merged SBOM."
+    value: ${{ steps.attach.outputs.sboms }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install syft, oras, cosign
+      shell: bash
+      run: |
+        "${GITHUB_ACTION_PATH}/install.sh" "${RUNNER_TEMP}/sbom-attach/bin" "${{ inputs.sign }}"
+        echo "${RUNNER_TEMP}/sbom-attach/bin" >> "$GITHUB_PATH"
+
+    - name: Scan, merge, attach
+      id: attach
+      shell: bash
+      env:
+        IMAGES: ${{ inputs.images }}
+        METADATA: ${{ inputs.metadata }}
+        SOURCE: ${{ inputs.source }}
+        SOURCE_CATALOGERS: ${{ inputs.source-catalogers }}
+        BUILD_SBOM: ${{ inputs.build-sbom }}
+        PLATFORM: ${{ inputs.platform }}
+        GO_REMOTE_LICENSES: ${{ inputs.go-remote-licenses }}
+        ATTACH: ${{ inputs.attach }}
+        SIGN: ${{ inputs.sign }}
+        PLAIN_HTTP: ${{ inputs.plain-http }}
+        OUT_DIR: ${{ runner.temp }}/sbom-attach/out
+      run: '"${GITHUB_ACTION_PATH}/attach.sh"'
